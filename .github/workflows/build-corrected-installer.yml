@@ -27,9 +27,14 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
-          $url = "https://github.com/FoxandMoss/Nalia-releases/releases/download/v0.1.0/Nalia-Windows-Installer.exe"
+          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/foxmoss-studio/Nalia-releases/releases/tags/v0.1.0"
+          $asset = $release.assets | Where-Object name -eq 'Nalia-Windows-Installer.exe' | Select-Object -First 1
+          if (-not $asset -or $asset.digest -notmatch '^sha256:([a-fA-F0-9]{64})$') { throw "Legacy payload digest missing" }
+          $expected = $Matches[1]
+          $url = $asset.browser_download_url
           curl.exe -L --fail --retry 5 --retry-delay 2 -o "$env:RUNNER_TEMP\nalia-old.exe" $url
           if ($LASTEXITCODE -ne 0) { throw "Nalia payload download failed: $LASTEXITCODE" }
+          if ((Get-FileHash "$env:RUNNER_TEMP\nalia-old.exe" -Algorithm SHA256).Hash -ine $expected) { throw "Legacy payload digest mismatch" }
 
       - name: Stage current Nalia files
         shell: powershell
