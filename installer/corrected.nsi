@@ -149,6 +149,7 @@ Section "Install"
   CreateDirectory "$INSTDIR\.foxmoss"
   SetOutPath "$INSTDIR\.foxmoss"
   File /oname=cleanup-legacy.ps1 "cleanup-legacy.ps1"
+  File /oname=owned-files.json "owned-files.json"
 
   SetOutPath "$INSTDIR"
   WriteUninstaller "$INSTDIR\uninstall.exe"
@@ -166,8 +167,16 @@ SectionEnd
 
 Section "Uninstall"
   nsExec::ExecToLog 'powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "$INSTDIR\.foxmoss\cleanup-legacy.ps1" -App "Nalia" -KeepInstallDir ""'
+  InitPluginsDir
+  File /oname=$PLUGINSDIR\remove-owned-files.ps1 "remove-owned-files.ps1"
+  nsExec::ExecToLog 'powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "$PLUGINSDIR\remove-owned-files.ps1" -InstallDir "$INSTDIR" -ManifestPath "$INSTDIR\.foxmoss\owned-files.json"'
+  Pop $0
+  ${If} $0 != 0
+    MessageBox MB_ICONSTOP "Nalia could not safely remove its owned files. User files were preserved."
+    Abort
+  ${EndIf}
   Delete "$SMPROGRAMS\Fox & Moss\Nalia.lnk"
   RMDir "$SMPROGRAMS\Fox & Moss"
   DeleteRegKey HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\Nalia"
-  RMDir /r "$INSTDIR"
+  RMDir "$INSTDIR"
 SectionEnd

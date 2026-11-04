@@ -1,11 +1,8 @@
 name: Build corrected Nalia installer
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "installer/**"
-      - ".github/workflows/build-corrected-installer.yml"
+  pull_request:
+    paths: ["installer/**", ".github/workflows/build-corrected-installer.yml"]
   workflow_dispatch:
 
 concurrency:
@@ -13,7 +10,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -30,9 +27,14 @@ jobs:
         shell: powershell
         run: |
           $ErrorActionPreference = "Stop"
-          $url = "https://github.com/FoxandMoss/Nalia-releases/releases/download/v0.1.0/Nalia-Windows-Installer.exe"
+          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/foxmoss-studio/Nalia-releases/releases/tags/v0.1.0"
+          $asset = $release.assets | Where-Object name -eq 'Nalia-Windows-Installer.exe' | Select-Object -First 1
+          if (-not $asset -or $asset.digest -notmatch '^sha256:([a-fA-F0-9]{64})$') { throw "Legacy payload digest missing" }
+          $expected = $Matches[1]
+          $url = $asset.browser_download_url
           curl.exe -L --fail --retry 5 --retry-delay 2 -o "$env:RUNNER_TEMP\nalia-old.exe" $url
           if ($LASTEXITCODE -ne 0) { throw "Nalia payload download failed: $LASTEXITCODE" }
+          if ((Get-FileHash "$env:RUNNER_TEMP\nalia-old.exe" -Algorithm SHA256).Hash -ine $expected) { throw "Legacy payload digest mismatch" }
 
       - name: Stage current Nalia files
         shell: powershell
@@ -53,34 +55,17 @@ jobs:
           $ErrorActionPreference = "Stop"
           $makensis = "${env:ProgramFiles(x86)}\NSIS\makensis.exe"
           if (!(Test-Path $makensis)) { $makensis = (Get-Command makensis.exe).Source }
+          ./installer/write-owned-manifest.ps1 -StageDir "C:\nalia-stage" -OutputPath "installer/owned-files.json"
           & $makensis "/DSTAGEDIR=C:\nalia-stage" "installer\corrected.nsi"
           if ($LASTEXITCODE -ne 0) { throw "makensis failed: $LASTEXITCODE" }
           if (!(Test-Path "installer\Nalia-Windows-Installer.exe")) { throw "Corrected installer missing" }
 
-      - name: Publish installer revision
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Verify owned-file cleanup
         shell: powershell
-        run: |
-          $ErrorActionPreference = "Stop"
-          $tag = "v0.1.0-installerfix1"
-          cmd.exe /d /c "gh release view $tag --repo $env:GITHUB_REPOSITORY >nul 2>&1"
-          $releaseExists = ($LASTEXITCODE -eq 0)
-          if (-not $releaseExists) {
-            gh release create $tag --repo $env:GITHUB_REPOSITORY --target main --title "Nalia v0.1.0 installer fix 1" --notes "Nalia v0.1.0 payload with corrected drive-radio installer and retroactive cleanup for stale Nalia tasks, startup entries, and helpers."
-          }
-          gh release edit $tag --repo $env:GITHUB_REPOSITORY --latest
-          if ($LASTEXITCODE -ne 0) { throw "Could not mark corrected Nalia release as latest" }
+        run: ./installer/test-preservation.ps1
 
-          New-Item -ItemType Directory -Force release-out | Out-Null
-          Copy-Item "installer\Nalia-Windows-Installer.exe" "release-out\Nalia-Windows-Installer.exe"
-          $sha=(Get-FileHash "release-out\Nalia-Windows-Installer.exe" -Algorithm SHA256).Hash.ToLower()
-          "$sha  Nalia-Windows-Installer.exe" | Set-Content "release-out\Nalia-Windows-Installer.exe.sha256" -Encoding ascii
-          gh release upload $tag "release-out\Nalia-Windows-Installer.exe" "release-out\Nalia-Windows-Installer.exe.sha256" --repo $env:GITHUB_REPOSITORY --clobber
-          Write-Host "Published SHA256 $sha"
-
-# Rebuild after NSIS resource-path correction
-
-# Rebuild after exact NSIS path fix
-
-# Rebuild after nsDialogs compatibility fix
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Nalia-legacy-installer-review
+          path: installer/Nalia-Windows-Installer.exe
+          if-no-files-found: error
