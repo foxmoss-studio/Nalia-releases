@@ -63,5 +63,7 @@ Get-ItemProperty $uninstallRoots -ErrorAction SilentlyContinue |
     if ($leaf -notmatch ("(?i)^" + [regex]::Escape($App) + "$")) { return }
     if ($full -match '(?i)\\(Documents|Desktop|Pictures|Videos|Music|Downloads)$') { return }
 
-    Remove-Item -LiteralPath $full -Recurse -Force -ErrorAction SilentlyContinue
+    # An app registration proves the product location, not ownership of every
+    # file in it. Old folders without an owned-file manifest are preserved.
+    Write-Output "Preserved legacy $App installation: $full"
   }
